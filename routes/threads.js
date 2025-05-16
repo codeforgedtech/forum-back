@@ -13,6 +13,7 @@ async function threadRoutes(fastify, options) {
           threads.title,
           threads.content,
           threads.created_at,
+          threads.user_id, -- 🔥 detta behövs för att veta vem som äger tråden
           categories.name AS category,
           users.username AS author,
           COUNT(comments.id) AS comment_count
@@ -27,9 +28,10 @@ async function threadRoutes(fastify, options) {
       reply.send(threads);
     } catch (err) {
       fastify.log.error(err);
-      reply.code(500).send({ error: 'Kunde inte h�mta tr�dar' });
+      reply.code(500).send({ error: 'Kunde inte hämta trådar' });
     }
   });
+  
   fastify.get('/threads/:id', async (request, reply) => {
     const threadId = request.params.id;  // H�mta tr�d-ID fr�n URL-parametern
     try {
@@ -88,26 +90,55 @@ async function threadRoutes(fastify, options) {
       reply.code(500).send({ error: 'Kunde inte skapa tr�d' });
     }
   });
-
+  fastify.delete('/comments/:id', { preHandler: verifyToken }, async (request, reply) => {
+    const commentId = request.params.id;
+    const userId = request.user.id;
+  
+    try {
+      const [rows] = await db.query('SELECT * FROM comments WHERE id = ? AND user_id = ?', [commentId, userId]);
+  
+      if (rows.length === 0) {
+        return reply.code(403).send({ error: 'Du har inte beh�righet att ta bort denna kommentar' });
+      }
+  
+      await db.query('DELETE FROM comments WHERE id = ?', [commentId]);
+      reply.send({ message: 'Kommentar borttagen' });
+    } catch (err) {
+      fastify.log.error(err);
+      reply.code(500).send({ error: 'Kunde inte ta bort kommentar' });
+    }
+  });
   // Ta bort en tr�d
   fastify.delete('/threads/:id', { preHandler: verifyToken }, async (request, reply) => {
     const threadId = request.params.id;
-    const userId = request.user.id;
-
+    const userId = request.user.id; // Kommer från verifyToken-middleware
+  
     try {
-      const [rows] = await db.query('SELECT * FROM threads WHERE id = ? AND user_id = ?', [threadId, userId]);
-
-      if (rows.length === 0) {
-        return reply.code(403).send({ error: 'Du har inte beh�righet att ta bort denna tr�d' });
+      // Kontrollera att tråden finns
+      const [threads] = await db.query('SELECT * FROM threads WHERE id = ?', [threadId]);
+      if (threads.length === 0) {
+        return reply.code(404).send({ error: 'Tråden hittades inte' });
       }
-
+  
+      // Kontrollera att användaren äger tråden
+      if (threads[0].user_id !== userId) {
+        return reply.code(403).send({ error: 'Du får inte ta bort denna tråd' });
+      }
+  
+      // Ta bort kommentarer om det behövs (för att undvika foreign key error)
+      await db.query('DELETE FROM comments WHERE thread_id = ?', [threadId]);
+  
+      // Ta bort tråden
       await db.query('DELETE FROM threads WHERE id = ?', [threadId]);
-      reply.send({ message: 'Tråd borttagen' });
+  
+      reply.send({ success: true });
     } catch (err) {
-      fastify.log.error(err);
-      reply.code(500).send({ error: 'Kunde inte ta bort tr�d' });
+      request.log.error(err);
+      reply.code(500).send({ error: 'Internt serverfel vid borttagning' });
     }
   });
+  
+  
 }
 
 module.exports = threadRoutes;

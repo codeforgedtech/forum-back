@@ -5,7 +5,7 @@ const swaggerUI = require('@fastify/swagger-ui');
 
 require('dotenv').config();
 fastify.register(cors, {
-  origin: 'http://localhost:5173', // eller true f�r alla
+  origin: 'http://localhost:5174', // eller true f�r alla
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 });
 

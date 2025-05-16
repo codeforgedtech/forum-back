@@ -4,42 +4,48 @@ const verifyToken = require('../authMiddleware');
 async function commentRoutes(fastify, options) {
   // Hämta alla kommentarer (inkl. replies) för en viss tråd
   fastify.get('/threads/:id/comments', async (request, reply) => {
-    const threadId = request.params.id;
+  const threadId = request.params.id;
 
-    try {
-      const [comments] = await db.query(
-        `SELECT comments.id, comments.content, comments.created_at, comments.parent_id, users.username
-         FROM comments
-         JOIN users ON comments.user_id = users.id
-         WHERE comments.thread_id = ?
-         ORDER BY comments.created_at ASC`,
-        [threadId]
-      );
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        c.id,
+        c.content,
+        c.created_at,
+        c.user_id,
+        c.parent_id,
+        u.username
+      FROM comments c
+      JOIN users u ON c.user_id = u.id
+      WHERE c.thread_id = ?
+      ORDER BY c.created_at ASC
+    `, [threadId]);
 
-      const rootComments = [];
-      const repliesByParentId = {};
+    // Dela upp kommentarer och svar
+    const comments = [];
+    const repliesMap = {};
 
-      for (const comment of comments) {
-        if (comment.parent_id === null) {
-          rootComments.push({ ...comment, replies: [] });
-        } else {
-          if (!repliesByParentId[comment.parent_id]) {
-            repliesByParentId[comment.parent_id] = [];
-          }
-          repliesByParentId[comment.parent_id].push(comment);
-        }
+    for (const row of rows) {
+      if (row.parent_id === null) {
+        comments.push({ ...row, replies: [] });
+      } else {
+        if (!repliesMap[row.parent_id]) repliesMap[row.parent_id] = [];
+        repliesMap[row.parent_id].push(row);
       }
-
-      for (const comment of rootComments) {
-        comment.replies = repliesByParentId[comment.id] || [];
-      }
-
-      reply.send(rootComments);
-    } catch (err) {
-      fastify.log.error(err);
-      reply.code(500).send({ error: 'Kunde inte hämta kommentarer' });
     }
-  });
+
+    // Lägg till svar i rätt kommentarer
+    for (const comment of comments) {
+      comment.replies = repliesMap[comment.id] || [];
+    }
+
+    reply.send(comments);
+  } catch (err) {
+    request.log.error(err);
+    reply.code(500).send({ error: 'Kunde inte hämta kommentarer' });
+  }
+});
+
 
   // Skapa en ny kommentar till en tråd
   fastify.post('/threads/:id/comments', { preHandler: verifyToken }, async (request, reply) => {
